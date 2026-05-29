@@ -1,0 +1,18 @@
+{
+  "alpha": 1.0,
+  "beta": 1.0,
+  "budgets": [
+    0.1,
+    0.25,
+    0.5
+  ],
+  "cache_dir": null,
+  "classifier": "logreg",
+  "embedding_backend": "resnet",
+  "force_recompute_embeddings": false,
+  "include_full_baseline": true,
+  "max_frames": null,
+  "metadata_csv": "data/synthetic_metadata.csv",
+  "output_dir": "results",
+  "seed": 0
+}

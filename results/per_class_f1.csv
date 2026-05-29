@@ -1,0 +1,11 @@
+method,budget,CalotTriangleDissection,CleaningCoagulation,ClippingCutting,GallbladderDissection,GallbladderPackaging,GallbladderRetraction,Preparation
+random,0.1,1.0,0.5,1.0,0.0,1.0,0.0,1.0
+random,0.25,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+random,0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+vision,0.1,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+vision,0.25,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+vision,0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+multimodal,0.1,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+multimodal,0.25,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+multimodal,0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+full,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
