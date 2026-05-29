@@ -164,7 +164,7 @@ def create_or_load_splits(
         existing = pd.read_csv(splits_path)
         if len(existing) == len(df) and "split" in existing.columns:
             log(f"Reusing cached splits at {splits_path}.")
-            merged = df.copy()
+            merged = df.copy().drop(columns=["split"], errors="ignore")
             merged = merged.merge(
                 existing[["frame_path", "split"]], on="frame_path", how="left"
             )

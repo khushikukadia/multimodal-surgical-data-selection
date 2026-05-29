@@ -8,11 +8,13 @@
   ],
   "cache_dir": null,
   "classifier": "logreg",
-  "embedding_backend": "resnet",
+  "embedding_backend": "clip",
   "force_recompute_embeddings": false,
+  "force_recompute_splits": false,
   "include_full_baseline": true,
   "max_frames": null,
-  "metadata_csv": "data/synthetic_metadata.csv",
+  "metadata_csv": "data/cholectrack20_metadata.csv",
   "output_dir": "results",
-  "seed": 0
+  "seed": 0,
+  "split_mode": "random"
 }

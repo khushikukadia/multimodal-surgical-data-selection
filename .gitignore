@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Dataset and large files
+data/cholectrack20/
+data/cholectrack20_metadata.csv
+results/cache/
