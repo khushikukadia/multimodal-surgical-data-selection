@@ -89,9 +89,21 @@ def plot_metric_vs_budget(
     """Line plot of ``metric`` vs ``budget`` with one line per sampling method."""
     fig, ax = plt.subplots(figsize=(7, 5))
     methods = sorted(m for m in results_df["method"].unique() if m != "full")
+    std_col = f"{metric}_std"
+    has_std = std_col in results_df.columns
     for method in methods:
         sub = results_df[results_df["method"] == method].sort_values("budget")
-        ax.plot(sub["budget"], sub[metric], marker="o", label=method)
+        if has_std and sub[std_col].abs().sum() > 0:
+            ax.errorbar(
+                sub["budget"],
+                sub[metric],
+                yerr=sub[std_col],
+                marker="o",
+                capsize=3,
+                label=method,
+            )
+        else:
+            ax.plot(sub["budget"], sub[metric], marker="o", label=method)
     if full_data_value is not None:
         ax.axhline(
             full_data_value,
@@ -109,6 +121,53 @@ def plot_metric_vs_budget(
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
     log(f"Saved plot to {save_path}.")
+
+
+def plot_frozen_vs_finetuned(
+    frozen_df: pd.DataFrame,
+    finetuned_df: pd.DataFrame,
+    metric: str,
+    save_path: str,
+) -> None:
+    """Overlay frozen (dashed) vs fine-tuned (solid) ``metric`` per method.
+
+    The headline figure for the fine-tuning experiment: if a sampling method's
+    fine-tuned curve pulls away from the others more than its frozen curve does,
+    the data selection is paying off once the encoder can adapt.
+    """
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    methods = sorted(
+        m
+        for m in set(frozen_df["method"]).union(finetuned_df["method"])
+        if m != "full"
+    )
+    cmap = plt.get_cmap("tab10")
+    std_col = f"{metric}_std"
+    for i, method in enumerate(methods):
+        color = cmap(i % 10)
+        fz = frozen_df[frozen_df["method"] == method].sort_values("budget")
+        if not fz.empty:
+            ax.plot(
+                fz["budget"], fz[metric], marker="o", linestyle="--",
+                color=color, alpha=0.7, label=f"{method} (frozen)",
+            )
+        ft = finetuned_df[finetuned_df["method"] == method].sort_values("budget")
+        if not ft.empty:
+            yerr = ft[std_col] if std_col in ft.columns else None
+            ax.errorbar(
+                ft["budget"], ft[metric], yerr=yerr, marker="s", linestyle="-",
+                color=color, capsize=3, label=f"{method} (fine-tuned)",
+            )
+    ax.set_xlabel("Training-data budget (fraction of train split)")
+    ax.set_ylabel(metric)
+    ax.set_title(f"{metric}: frozen (dashed) vs fine-tuned (solid)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    ensure_dir(os.path.dirname(save_path) or ".")
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    log(f"Saved frozen-vs-finetuned plot to {save_path}.")
 
 
 def save_results(

@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
 from .utils import ensure_dir, log
 
@@ -131,6 +131,56 @@ def split_summary(df: pd.DataFrame) -> str:
     return line
 
 
+def _has_usable_video_groups(df: pd.DataFrame) -> bool:
+    """True if ``df`` has a ``video_id`` column with enough distinct videos to
+    carve out disjoint train/val/test groups (need at least 3)."""
+    if "video_id" not in df.columns:
+        return False
+    return int(df["video_id"].nunique()) >= 3
+
+
+def video_grouped_split(
+    df: pd.DataFrame,
+    seed: int,
+    train_size: float = 0.7,
+    val_size: float = 0.15,
+    test_size: float = 0.15,
+) -> pd.DataFrame:
+    """Assign whole videos to train/val/test so no video leaks across splits.
+
+    Uses ``GroupShuffleSplit`` on ``video_id``. Frames from any given surgery
+    appear in exactly one split, which is the methodologically correct setup
+    for surgical phase recognition (consecutive 1-fps frames are near
+    duplicates and must not straddle train/test).
+    """
+    if "video_id" not in df.columns:
+        raise ValueError("video_grouped_split requires a 'video_id' column.")
+
+    groups = df["video_id"].astype(str).to_numpy()
+    positions = np.arange(len(df))
+
+    # First carve off the test videos.
+    gss_test = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    trainval_pos, test_pos = next(gss_test.split(positions, groups=groups))
+
+    # Then split the remainder into train / val by video.
+    rel_val = val_size / (train_size + val_size)
+    gss_val = GroupShuffleSplit(n_splits=1, test_size=rel_val, random_state=seed)
+    tv_groups = groups[trainval_pos]
+    tr_rel, val_rel = next(gss_val.split(trainval_pos, groups=tv_groups))
+    train_pos = trainval_pos[tr_rel]
+    val_pos = trainval_pos[val_rel]
+
+    assignment = np.empty(len(df), dtype=object)
+    assignment[train_pos] = "train"
+    assignment[val_pos] = "val"
+    assignment[test_pos] = "test"
+
+    out = df.copy()
+    out["split"] = assignment
+    return out
+
+
 def create_or_load_splits(
     df: pd.DataFrame,
     output_dir: str,
@@ -146,9 +196,13 @@ def create_or_load_splits(
     ``split_mode``:
         - ``auto`` (default): use official CholecTrack20 video splits when the
           metadata CSV (or frame paths) indicate training/validation/testing;
-          otherwise fall back to a stratified random frame split.
+          else a video-grouped split when ``video_id`` is available (no video
+          leakage); else a stratified random frame split as a last resort.
         - ``official``: require official splits (raises if not found).
-        - ``random``: always use stratified random frame split (70/15/15).
+        - ``video``: split whole videos into train/val/test (no leakage).
+        - ``random``: stratified random *frame* split (70/15/15). NOTE: this
+          leaks near-duplicate frames across splits and inflates metrics; use
+          only for quick smoke tests, never for reported results.
 
     Saves ``<output_dir>/splits.csv`` so all sampling methods share the same
     partition on subsequent runs.
@@ -158,6 +212,10 @@ def create_or_load_splits(
 
     use_official = split_mode == "official" or (
         split_mode == "auto" and has_official_splits(df)
+    )
+    use_video = (not use_official) and (
+        split_mode == "video"
+        or (split_mode == "auto" and _has_usable_video_groups(df))
     )
 
     if os.path.exists(splits_path) and not force_recompute:
@@ -174,6 +232,12 @@ def create_or_load_splits(
                 log(f"Split summary: {split_summary(merged)}")
                 return merged
 
+    if split_mode == "video" and not _has_usable_video_groups(df):
+        raise ValueError(
+            "split_mode=video requires a 'video_id' column with >=3 distinct "
+            "videos. Build metadata with `prepare_metadata.py cholectrack20`."
+        )
+
     if use_official:
         if split_mode == "official" and not has_official_splits(df):
             raise ValueError(
@@ -186,12 +250,32 @@ def create_or_load_splits(
             "Using CholecTrack20 official video splits "
             "(10 train / 2 val / 8 test videos when all splits are included)."
         )
+    elif use_video:
+        out = video_grouped_split(
+            df,
+            seed=seed,
+            train_size=train_size,
+            val_size=val_size,
+            test_size=test_size,
+        )
+        log(
+            f"Using video-grouped split ({train_size:.0%}/{val_size:.0%}/"
+            f"{test_size:.0%} by video, seed={seed}); no video appears in more "
+            "than one split."
+        )
     else:
         assert abs(train_size + val_size + test_size - 1.0) < 1e-6
         log(
             f"Using stratified random frame split "
             f"({train_size:.0%}/{val_size:.0%}/{test_size:.0%}, seed={seed})."
         )
+        if "video_id" in df.columns:
+            log(
+                "WARNING: random frame split lets frames from the same video "
+                "appear in train AND test (data leakage). This inflates metrics "
+                "and shrinks differences between sampling methods. Prefer "
+                "split_mode=video or official for reported results."
+            )
         stratify = df["phase"] if _stratified_safe(df, "phase") else None
         if stratify is None:
             log(

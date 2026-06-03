@@ -33,6 +33,80 @@ def random_sample(indices: np.ndarray, budget: float, seed: int) -> np.ndarray:
     return indices[chosen]
 
 
+def stratified_random_sample(
+    indices: np.ndarray, labels: np.ndarray, budget: float, seed: int
+) -> np.ndarray:
+    """Random subset that preserves the per-class proportions of the pool.
+
+    This is the key control for the ``multimodal`` sampler: because the
+    multimodal embedding concatenates the (ground-truth) phase-label text
+    vector, multimodal k-means effectively clusters by label, so any gain it
+    shows could be pure class balancing. Comparing against this baseline tells
+    us whether multimodal does anything beyond stratification.
+
+    Allocation uses the largest-remainder method so the per-class counts sum to
+    exactly ``k`` and every present class gets at least one example (budget
+    permitting).
+    """
+    n = len(indices)
+    if len(labels) != n:
+        raise ValueError(
+            f"indices ({n}) and labels ({len(labels)}) must have the same length"
+        )
+    k = _budget_to_k(budget, n)
+    rng = np.random.default_rng(seed)
+
+    labels = np.asarray(labels)
+    classes, counts = np.unique(labels, return_counts=True)
+    n_classes = len(classes)
+
+    if k <= n_classes:
+        # Budget too small to give every class a slot: pick k classes at random
+        # and take one example from each.
+        chosen_classes = rng.choice(n_classes, size=k, replace=False)
+        alloc = np.zeros(n_classes, dtype=int)
+        alloc[chosen_classes] = 1
+    else:
+        # Proportional target per class, with >=1 per class, capped at counts.
+        exact = counts / n * k
+        alloc = np.floor(exact).astype(int)
+        alloc = np.clip(alloc, 1, counts)
+
+        # Reconcile the allocation so it sums to exactly k (feasible because
+        # n_classes <= k <= sum(counts) = n). Cycle through classes adding to
+        # (or removing from) those with remaining capacity (or surplus).
+        diff = k - int(alloc.sum())
+        if diff > 0:
+            order = np.argsort(-(exact - np.floor(exact)))
+            i = 0
+            while diff > 0:
+                ci = order[i % n_classes]
+                if alloc[ci] < counts[ci]:
+                    alloc[ci] += 1
+                    diff -= 1
+                i += 1
+        elif diff < 0:
+            order = np.argsort(-alloc)
+            i = 0
+            while diff < 0:
+                ci = order[i % n_classes]
+                if alloc[ci] > 1:
+                    alloc[ci] -= 1
+                    diff += 1
+                i += 1
+
+    selected_positions = []
+    for ci, cls in enumerate(classes):
+        pool = np.flatnonzero(labels == cls)
+        take = min(int(alloc[ci]), len(pool))
+        if take > 0:
+            chosen = rng.choice(pool, size=take, replace=False)
+            selected_positions.extend(chosen.tolist())
+
+    selected_arr = np.array(sorted(selected_positions), dtype=np.int64)
+    return indices[selected_arr]
+
+
 def kmeans_diversity_sample(
     indices: np.ndarray,
     embeddings: np.ndarray,
@@ -119,14 +193,23 @@ def select_subset(
     multimodal_embeddings: Optional[np.ndarray],
     budget: float,
     seed: int,
+    labels: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Dispatch to the requested subset-selection method.
 
     ``train_indices`` should be the integer indices of the TRAIN split into the
     full dataset (so that embeddings can be looked up via these indices).
+    ``labels`` (when given) are the phase labels for the FULL dataset, indexed
+    the same way as the embeddings; required for ``stratified``.
     """
     if method == "random":
         return random_sample(train_indices, budget, seed)
+    if method == "stratified":
+        if labels is None:
+            raise ValueError("labels must be provided for method='stratified'")
+        return stratified_random_sample(
+            train_indices, labels[train_indices], budget, seed
+        )
     if method == "vision":
         emb_train = visual_embeddings[train_indices]
         return kmeans_diversity_sample(train_indices, emb_train, budget, seed)
